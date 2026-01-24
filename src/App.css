@@ -1,0 +1,120 @@
+.app {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.app-header {
+  padding: 20px 40px;
+  background-color: #000;
+  border-bottom: 1px solid #333;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.app-header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #e50914;
+  margin: 0;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.hamburger-button {
+  display: none;
+  width: 40px;
+  height: 40px;
+  background-color: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e5e5e5;
+  font-size: 24px;
+  cursor: pointer;
+  transition: all 0.2s;
+  align-items: center;
+  justify-content: center;
+}
+
+.hamburger-button:hover {
+  background-color: #333;
+  border-color: #555;
+}
+
+.app-main {
+  flex: 1;
+  padding: 40px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.loading {
+  text-align: center;
+  padding: 100px 20px;
+  font-size: 24px;
+  color: #999;
+}
+
+.no-videos {
+  text-align: center;
+  padding: 100px 20px;
+}
+
+.no-videos p {
+  font-size: 20px;
+  color: #999;
+  margin-bottom: 20px;
+}
+
+.no-videos button {
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  color: white;
+  background-color: #e50914;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.no-videos button:hover {
+  background-color: #f40612;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    padding: 15px 20px;
+  }
+
+  .app-header h1 {
+    font-size: 24px;
+  }
+
+  .hamburger-button {
+    display: flex;
+  }
+
+  .app-content {
+    position: relative;
+  }
+
+  .app-main {
+    padding: 20px;
+    width: 100%;
+  }
+}
