@@ -5,8 +5,8 @@ import fs from 'fs'
 import path from 'path'
 import { spawn } from 'child_process'
 
-// GitHub 저장소 설정 (실제 저장소로 변경 필요)
-const GITHUB_OWNER = 'your-username'
+// GitHub 저장소 설정
+const GITHUB_OWNER = 'borinomi'
 const GITHUB_REPO = 'myflix'
 
 /**
