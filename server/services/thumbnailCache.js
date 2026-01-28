@@ -13,9 +13,11 @@ const __dirname = path.dirname(__filename)
 function setupFfmpegPath() {
   const possiblePaths = []
 
-  // 1. Electron 패키지된 앱 - extraResources 경로
+  // 1. Electron 패키지된 앱 - extraResources 경로 (process.resourcesPath = resources/)
+  // extraResources는 resources/ffmpeg/ffmpeg.exe에 위치
   if (process.env.RESOURCES_PATH) {
     possiblePaths.push(path.join(process.env.RESOURCES_PATH, 'ffmpeg', 'ffmpeg.exe'))
+    console.log('FFmpeg 검색 경로 (RESOURCES_PATH):', path.join(process.env.RESOURCES_PATH, 'ffmpeg', 'ffmpeg.exe'))
   }
 
   // 2. 개발 모드 - node_modules/ffmpeg-static

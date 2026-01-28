@@ -138,13 +138,23 @@ app.use(express.json())
 
 // 프로덕션 환경에서 정적 파일 서빙
 if (isProduction || isElectron) {
-  const distPath = isElectron
-    ? path.join(process.env.RESOURCES_PATH || __dirname, '..', 'dist')
+  // APP_PATH = resources/app (asar: false일 때)
+  // 개발 모드: __dirname/../dist
+  const distPath = process.env.APP_PATH
+    ? path.join(process.env.APP_PATH, 'dist')
     : path.join(__dirname, '..', 'dist')
+
+  console.log('isElectron:', isElectron)
+  console.log('isProduction:', isProduction)
+  console.log('APP_PATH:', process.env.APP_PATH)
+  console.log('distPath:', distPath)
+  console.log('distPath exists:', fs.existsSync(distPath))
 
   if (fs.existsSync(distPath)) {
     app.use(express.static(distPath))
-    console.log('정적 파일 경로:', distPath)
+    console.log('정적 파일 서빙 설정됨:', distPath)
+  } else {
+    console.error('dist 폴더를 찾을 수 없음:', distPath)
   }
 }
 
@@ -441,10 +451,16 @@ app.get('/api/health', (req, res) => {
 if (isProduction || isElectron) {
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
-      const distPath = isElectron
-        ? path.join(process.env.RESOURCES_PATH || __dirname, '..', 'dist')
+      const distPath = process.env.APP_PATH
+        ? path.join(process.env.APP_PATH, 'dist')
         : path.join(__dirname, '..', 'dist')
-      res.sendFile(path.join(distPath, 'index.html'))
+      const indexPath = path.join(distPath, 'index.html')
+
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath)
+      } else {
+        res.status(500).send(`index.html not found at ${indexPath}`)
+      }
     } else {
       res.status(404).json({ error: 'API not found' })
     }

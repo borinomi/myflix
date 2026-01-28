@@ -1,7 +1,6 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, utilityProcess } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { spawn } from 'child_process'
 import fs from 'fs'
 import http from 'http'
 import { checkAndNotifyUpdate, checkForUpdates } from './updater.js'
@@ -15,6 +14,16 @@ const PORT = 5000
 
 let mainWindow
 let serverProcess
+
+// 로그 파일 경로
+const getLogPath = () => path.join(app.getPath('userData'), 'app.log')
+const log = (msg) => {
+  const line = `${new Date().toISOString()} ${msg}\n`
+  console.log(msg)
+  try {
+    fs.appendFileSync(getLogPath(), line)
+  } catch (e) {}
+}
 
 // IPC 핸들러 등록
 ipcMain.handle('get-app-version', () => app.getVersion())
@@ -65,14 +74,18 @@ async function waitForServer(maxAttempts = 30, interval = 500) {
  * 서버 시작
  */
 function startServer() {
+  // 패키징된 앱: app.getAppPath() = resources/app
+  // 개발 모드: __dirname = electron/
   const serverPath = isDev
     ? path.join(__dirname, '..', 'server', 'index.js')
-    : path.join(process.resourcesPath, 'server', 'index.js')
+    : path.join(app.getAppPath(), 'server', 'index.js')
 
-  console.log('서버 경로:', serverPath)
+  log(`서버 경로: ${serverPath}`)
+  log(`app.getAppPath(): ${app.getAppPath()}`)
+  log(`process.resourcesPath: ${process.resourcesPath}`)
 
   if (!fs.existsSync(serverPath)) {
-    console.error('서버 파일을 찾을 수 없습니다:', serverPath)
+    log(`서버 파일을 찾을 수 없습니다: ${serverPath}`)
     return null
   }
 
@@ -80,34 +93,42 @@ function startServer() {
     ...process.env,
     NODE_ENV: isDev ? 'development' : 'production',
     ELECTRON_APP_PATH: app.getAppPath(),
-    RESOURCES_PATH: process.resourcesPath || path.join(__dirname, '..')
+    // app.getAppPath() = resources/app (asar: false)
+    // process.resourcesPath = resources (extraResources 위치)
+    APP_PATH: app.getAppPath(),
+    RESOURCES_PATH: process.resourcesPath
   }
 
-  serverProcess = spawn('node', [serverPath], {
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    shell: false,
-    windowsHide: true
-  })
+  log(`환경변수 APP_PATH: ${env.APP_PATH}`)
+  log(`환경변수 RESOURCES_PATH: ${env.RESOURCES_PATH}`)
 
-  serverProcess.stdout.on('data', (data) => {
-    console.log(`[Server] ${data.toString().trim()}`)
-  })
+  // utilityProcess.fork 사용 (Electron 공식 API)
+  try {
+    serverProcess = utilityProcess.fork(serverPath, [], {
+      env,
+      stdio: 'pipe',
+      serviceName: 'MyFlix-Server'
+    })
 
-  serverProcess.stderr.on('data', (data) => {
-    console.error(`[Server Error] ${data.toString().trim()}`)
-  })
+    serverProcess.stdout?.on('data', (data) => {
+      log(`[Server] ${data.toString().trim()}`)
+    })
 
-  serverProcess.on('close', (code) => {
-    console.log(`서버 프로세스 종료: ${code}`)
-    serverProcess = null
-  })
+    serverProcess.stderr?.on('data', (data) => {
+      log(`[Server Error] ${data.toString().trim()}`)
+    })
 
-  serverProcess.on('error', (error) => {
-    console.error('서버 시작 오류:', error)
-  })
+    serverProcess.on('exit', (code) => {
+      log(`서버 프로세스 종료: ${code}`)
+      serverProcess = null
+    })
 
-  return serverProcess
+    log('서버 프로세스 시작됨')
+    return serverProcess
+  } catch (error) {
+    log(`서버 시작 오류: ${error.message}`)
+    return null
+  }
 }
 
 /**
@@ -193,7 +214,7 @@ app.whenReady().then(() => {
 // 모든 윈도우 닫힘
 app.on('window-all-closed', () => {
   if (serverProcess) {
-    serverProcess.kill()
+    try { serverProcess.kill() } catch (e) { log(`서버 종료 오류: ${e.message}`) }
     serverProcess = null
   }
 
@@ -205,7 +226,7 @@ app.on('window-all-closed', () => {
 // 앱 종료 전
 app.on('before-quit', () => {
   if (serverProcess) {
-    serverProcess.kill()
+    try { serverProcess.kill() } catch (e) { log(`서버 종료 오류: ${e.message}`) }
     serverProcess = null
   }
 })
