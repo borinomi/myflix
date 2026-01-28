@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import './ImageViewer.css'
 
 function ImageViewer({ images, currentIndex, onClose }) {
@@ -9,6 +9,14 @@ function ImageViewer({ images, currentIndex, onClose }) {
   useEffect(() => {
     setIndex(currentIndex)
   }, [currentIndex])
+
+  const handlePrevious = useCallback(() => {
+    setIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1))
+  }, [images.length])
+
+  const handleNext = useCallback(() => {
+    setIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0))
+  }, [images.length])
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -23,15 +31,7 @@ function ImageViewer({ images, currentIndex, onClose }) {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [index, images.length])
-
-  const handlePrevious = () => {
-    setIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1))
-  }
-
-  const handleNext = () => {
-    setIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0))
-  }
+  }, [onClose, handlePrevious, handleNext])
 
   const handleBackdropClick = (e) => {
     if (e.target.classList.contains('image-viewer-overlay')) {

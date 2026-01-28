@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getParentDirectory } from './utils/pathUtils'
+import { useMediaData } from './hooks/useMediaData'
 import VideoGrid from './components/VideoGrid'
 import VideoPlayer from './components/VideoPlayer'
 import ImageViewer from './components/ImageViewer'
@@ -7,17 +8,24 @@ import DirectoryInput from './components/DirectoryInput'
 import FolderSidebar from './components/FolderSidebar'
 import PlayerModeToggle from './components/PlayerModeToggle'
 import PhotoModeToggle from './components/PhotoModeToggle'
+import FolderViewToggle from './components/FolderViewToggle'
 import './App.css'
 
 function App() {
-  const [videos, setVideos] = useState([])
-  const [images, setImages] = useState([])
+  const {
+    videos, setVideos,
+    images, setImages,
+    folders, setFolders,
+    currentDirectory, setCurrentDirectory,
+    loading, setLoading,
+    fetchVideos, fetchImages, fetchFolders
+  } = useMediaData()
+
   const [selectedVideo, setSelectedVideo] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [currentDirectory, setCurrentDirectory] = useState(null)
   const [showDirectoryInput, setShowDirectoryInput] = useState(true)
   const [playerMode, setPlayerMode] = useState('browser')
   const [includePhotos, setIncludePhotos] = useState(false)
+  const [showFolders, setShowFolders] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedImageIndex, setSelectedImageIndex] = useState(null)
 
@@ -31,6 +39,7 @@ function App() {
       const data = await response.json()
       if (data.directory) {
         setCurrentDirectory(data.directory)
+        // fetchVideos는 useEffect에서 호출되거나 여기서 직접 호출
         fetchVideos(data.directory)
         setShowDirectoryInput(false)
 
@@ -43,60 +52,7 @@ function App() {
     } catch (error) {
       console.error('디렉토리 조회 실패:', error)
     }
-  }, [])
-
-  const fetchVideos = useCallback(async (directory) => {
-    let ignore = false
-    setLoading(true)
-
-    try {
-      const targetDir = directory || currentDirectory
-      const response = await fetch(`/api/videos-in-folder?directory=${encodeURIComponent(targetDir)}`)
-      if (!response.ok) throw new Error('Failed to fetch videos')
-
-      const data = await response.json()
-      if (!ignore) {
-        setVideos(data)
-      }
-    } catch (error) {
-      console.error('비디오 목록 로딩 실패:', error)
-      if (!ignore) {
-        setVideos([])
-      }
-    } finally {
-      if (!ignore) {
-        setLoading(false)
-      }
-    }
-
-    return () => {
-      ignore = true
-    }
-  }, [currentDirectory])
-
-  const fetchImages = useCallback(async (directory) => {
-    let ignore = false
-
-    try {
-      const targetDir = directory || currentDirectory
-      const response = await fetch(`/api/images-in-folder?directory=${encodeURIComponent(targetDir)}`)
-      if (!response.ok) throw new Error('Failed to fetch images')
-
-      const data = await response.json()
-      if (!ignore) {
-        setImages(data)
-      }
-    } catch (error) {
-      console.error('이미지 목록 로딩 실패:', error)
-      if (!ignore) {
-        setImages([])
-      }
-    }
-
-    return () => {
-      ignore = true
-    }
-  }, [currentDirectory])
+  }, [setCurrentDirectory, fetchVideos])
 
   useEffect(() => {
     if (!initialized.current) {
@@ -125,8 +81,6 @@ function App() {
       }
     }
   }, [fetchCurrentDirectory, fetchVideos])
-
-  // getParentDirectory imported from utils/pathUtils
 
   const handleFolderSelect = useCallback((folderPath, skipHistory = false) => {
     setCurrentDirectory(folderPath)
@@ -175,7 +129,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [currentDirectory, showDirectoryInput, selectedVideo, selectedImageIndex, getParentDirectory, handleFolderSelect, handleClosePlayer, handleCloseImageViewer])
+  }, [currentDirectory, showDirectoryInput, selectedVideo, selectedImageIndex, handleFolderSelect, handleClosePlayer, handleCloseImageViewer])
 
   useEffect(() => {
     const handlePopState = (event) => {
@@ -198,6 +152,14 @@ function App() {
     }
   }, [currentDirectory, includePhotos, fetchImages])
 
+  useEffect(() => {
+    if (currentDirectory && showFolders) {
+      fetchFolders(currentDirectory)
+    } else {
+      setFolders([])
+    }
+  }, [currentDirectory, showFolders, fetchFolders])
+
   const handleDirectorySet = useCallback((directory, saveAsDefault = false) => {
     setCurrentDirectory(directory)
     setShowDirectoryInput(false)
@@ -218,6 +180,7 @@ function App() {
     setShowDirectoryInput(true)
     setVideos([])
     setImages([])
+    setFolders([])
     setSelectedVideo(null)
     setSelectedImageIndex(null)
     setSidebarOpen(false)
@@ -255,6 +218,10 @@ function App() {
     setIncludePhotos(include)
   }, [])
 
+  const handleFolderViewToggle = useCallback((show) => {
+    setShowFolders(show)
+  }, [])
+
   const toggleSidebar = useCallback(() => {
     setSidebarOpen(prev => !prev)
   }, [])
@@ -271,9 +238,10 @@ function App() {
             ☰
           </button>
         )}
-        <h1>Video Kiosk</h1>
+        <h1>Myflix</h1>
         {currentDirectory && !showDirectoryInput && (
           <div className="header-controls">
+            <FolderViewToggle showFolders={showFolders} onToggle={handleFolderViewToggle} />
             <PhotoModeToggle includePhotos={includePhotos} onToggle={handlePhotoModeToggle} />
             <PlayerModeToggle mode={playerMode} onModeChange={handlePlayerModeChange} />
           </div>
@@ -308,8 +276,10 @@ function App() {
               <VideoGrid
                 videos={videos}
                 images={includePhotos ? images : []}
+                folders={showFolders ? folders : []}
                 onVideoSelect={handleVideoSelect}
                 onImageSelect={handleImageSelect}
+                onFolderSelect={handleFolderSelect}
               />
             )}
           </main>

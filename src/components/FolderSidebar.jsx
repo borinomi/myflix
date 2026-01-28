@@ -41,8 +41,6 @@ function FolderSidebar({ currentDirectory, onFolderSelect, onChangeDirectory, is
     onFolderSelect(folderPath)
   }
 
-  // getParentDirectory imported from ../utils/pathUtils
-
   const handleBackClick = () => {
     const parent = getParentDirectory(currentDirectory)
     if (parent) {

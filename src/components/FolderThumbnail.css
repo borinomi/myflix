@@ -1,0 +1,155 @@
+.folder-thumbnail {
+  position: relative;
+  background-color: #2a2a2a;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 3px solid #f5a623;
+  box-sizing: border-box;
+}
+
+.folder-thumbnail:hover {
+  transform: scale(1.05);
+  box-shadow: 0 8px 16px rgba(245, 166, 35, 0.4);
+  border-color: #ffcc00;
+}
+
+.folder-thumbnail .thumbnail-image {
+  position: relative;
+  width: 100%;
+  padding-bottom: 56.25%; /* 16:9 비율 */
+  overflow: hidden;
+  background-color: #1a1a1a;
+}
+
+.folder-thumbnail .thumbnail-image img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.folder-thumbnail .thumbnail-image.loaded img {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.folder-thumbnail .skeleton {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    #1a1a1a 25%,
+    #2a2a2a 50%,
+    #1a1a1a 75%
+  );
+  background-size: 200% 100%;
+  animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.folder-thumbnail .default-thumbnail {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #1a1a1a;
+}
+
+.folder-thumbnail .folder-icon-large {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+.folder-thumbnail .folder-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background-color: rgba(245, 166, 35, 0.9);
+  border-radius: 6px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.folder-thumbnail .folder-badge-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.folder-thumbnail .thumbnail-info {
+  padding: 12px;
+  background-color: #2a2a2a;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.folder-thumbnail .folder-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #e5e5e5;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+@media (max-width: 768px) {
+  .folder-thumbnail .folder-icon-large {
+    font-size: 36px;
+  }
+
+  .folder-thumbnail .thumbnail-info {
+    padding: 8px;
+  }
+
+  .folder-thumbnail .folder-name {
+    font-size: 12px;
+  }
+
+  .folder-thumbnail .folder-badge {
+    top: 4px;
+    left: 4px;
+    padding: 2px 6px;
+  }
+
+  .folder-thumbnail .folder-badge-icon {
+    font-size: 12px;
+  }
+}

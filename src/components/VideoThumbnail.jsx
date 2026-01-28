@@ -15,6 +15,9 @@ function VideoThumbnail({ video, onSelect }) {
       return
     }
 
+    const node = thumbnailRef.current
+    if (!node) return
+
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -27,14 +30,10 @@ function VideoThumbnail({ video, onSelect }) {
       }
     )
 
-    if (thumbnailRef.current) {
-      observer.observe(thumbnailRef.current)
-    }
+    observer.observe(node)
 
     return () => {
-      if (thumbnailRef.current) {
-        observer.unobserve(thumbnailRef.current)
-      }
+      observer.unobserve(node)
     }
   }, [hasThumbnail])
 

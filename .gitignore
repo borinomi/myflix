@@ -3,24 +3,43 @@ node_modules
 /.pnp
 .pnp.js
 
-# Production
+# Production build
 dist
 build
+release
 
-# Misc
-.DS_Store
+# Electron
+release/
+
+# Local config (사용자별 설정)
+config.json
+
+# Thumbnail cache
+server/cache/
+
+# Media files (테스트용)
+media/
+*.mp4
+*.mkv
+*.avi
+*.mov
+
+# Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# OS files
+.DS_Store
+Thumbs.db
+
 # Editor
 .vscode
 .idea
+*.swp
+*.swo
 
-# Media files (테스트용 파일은 커밋하지 않음)
-media/
-*.mp4
-*.jpg
-*.jpeg
-*.png
+# Temp files
+*.tmp
+*.temp

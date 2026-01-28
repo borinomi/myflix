@@ -3,15 +3,22 @@ import cors from 'cors'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { exec } from 'child_process'
+import { spawn } from 'child_process'
 import iconv from 'iconv-lite'
 import { VIDEO_FORMATS, IMAGE_FORMATS } from './constants/mediaFormats.js'
+import { scanDirectory, scanImages, getFolderTree, getFoldersWithThumbnails } from './services/fileScanner.js'
+import { convertSrtToVtt } from './utils/subtitleConverter.js'
+import { generateThumbnail, clearThumbnailCache, getCacheStats } from './services/thumbnailCache.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// 환경 설정
+const isElectron = process.env.ELECTRON_APP_PATH !== undefined
+const isProduction = process.env.NODE_ENV === 'production'
+
 const app = express()
-const PORT = 5000
+const PORT = process.env.PORT || 5000
 
 // config.json 파일 경로
 const CONFIG_PATH = path.join(__dirname, '..', 'config.json')
@@ -21,7 +28,81 @@ const DEFAULT_CONFIG = {
   scanDirectory: path.join(__dirname, '..', 'media')
 }
 
-// 설정 로드 함수
+// ============================================================
+// 보안 유틸리티 함수
+// ============================================================
+
+/**
+ * Path Traversal 공격 방어 - 경로가 허용된 디렉토리 내부인지 검증
+ * @param {string} requestedPath - 요청된 경로
+ * @param {string} allowedBase - 허용된 기본 디렉토리 (없으면 SCAN_DIRECTORY 사용)
+ * @returns {{ safe: boolean, resolvedPath: string, error?: string }}
+ */
+function validatePath(requestedPath, allowedBase = null) {
+  try {
+    const baseDir = allowedBase || SCAN_DIRECTORY
+    const resolved = path.resolve(requestedPath)
+    const resolvedBase = path.resolve(baseDir)
+
+    // 경로가 허용된 디렉토리 내부인지 확인
+    // 네트워크 경로(\\)도 허용
+    const isNetworkPath = resolved.startsWith('\\\\') || resolvedBase.startsWith('\\\\')
+    const isInsideBase = resolved.startsWith(resolvedBase + path.sep) || resolved === resolvedBase
+
+    if (isNetworkPath || isInsideBase) {
+      return { safe: true, resolvedPath: resolved }
+    }
+
+    // 추가 검증: 상위 디렉토리 이동 패턴 검출
+    if (requestedPath.includes('..')) {
+      return { safe: false, resolvedPath: resolved, error: '잘못된 경로입니다.' }
+    }
+
+    // 네트워크 경로는 별도 처리 (UNC 경로)
+    if (resolved.startsWith('\\\\')) {
+      return { safe: true, resolvedPath: resolved }
+    }
+
+    return { safe: false, resolvedPath: resolved, error: '접근이 허용되지 않은 경로입니다.' }
+  } catch (error) {
+    return { safe: false, resolvedPath: '', error: '경로 검증 오류' }
+  }
+}
+
+/**
+ * 파일 경로가 허용된 확장자인지 검증
+ * @param {string} filePath - 파일 경로
+ * @param {string[]} allowedExtensions - 허용된 확장자 배열
+ * @returns {boolean}
+ */
+function validateExtension(filePath, allowedExtensions) {
+  const ext = path.extname(filePath).toLowerCase()
+  return allowedExtensions.includes(ext)
+}
+
+/**
+ * MIME 타입 반환
+ * @param {string} filePath - 파일 경로
+ * @returns {string}
+ */
+function getVideoMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  const mimeTypes = {
+    '.mp4': 'video/mp4',
+    '.mkv': 'video/x-matroska',
+    '.webm': 'video/webm',
+    '.avi': 'video/x-msvideo',
+    '.mov': 'video/quicktime',
+    '.flv': 'video/x-flv',
+    '.wmv': 'video/x-ms-wmv'
+  }
+  return mimeTypes[ext] || 'video/mp4'
+}
+
+// ============================================================
+// 설정 관리
+// ============================================================
+
 function loadConfig() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
@@ -34,7 +115,6 @@ function loadConfig() {
   return DEFAULT_CONFIG
 }
 
-// 설정 저장 함수
 function saveConfig(config) {
   try {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8')
@@ -44,181 +124,33 @@ function saveConfig(config) {
   }
 }
 
+// 설정 로드
+const config = loadConfig()
+let SCAN_DIRECTORY = config.scanDirectory
+let videoCache = []
+
+// ============================================================
 // 미들웨어
+// ============================================================
+
 app.use(cors())
 app.use(express.json())
 
-// 설정 로드
-const config = loadConfig()
+// 프로덕션 환경에서 정적 파일 서빙
+if (isProduction || isElectron) {
+  const distPath = isElectron
+    ? path.join(process.env.RESOURCES_PATH || __dirname, '..', 'dist')
+    : path.join(__dirname, '..', 'dist')
 
-// 스캔할 폴더 경로 (사용자가 설정)
-let SCAN_DIRECTORY = config.scanDirectory
-
-// 비디오 목록 캐시
-let videoCache = []
-
-// 파일 스캔 함수
-function scanDirectory(directory) {
-  const videos = []
-  // VIDEO_FORMATS and IMAGE_FORMATS imported from ./constants/mediaFormats.js
-  const supportedFormats = VIDEO_FORMATS
-
-  try {
-    if (!fs.existsSync(directory)) {
-      console.log(`디렉토리가 존재하지 않습니다: ${directory}`)
-      return videos
-    }
-
-    const files = fs.readdirSync(directory)
-    const videoFiles = files.filter(file => {
-      const ext = path.extname(file).toLowerCase()
-      return supportedFormats.includes(ext)
-    })
-
-    videoFiles.forEach(videoFile => {
-      const ext = path.extname(videoFile)
-      const baseName = path.basename(videoFile, ext)
-
-      const thumbnailFile = files.find(file => {
-        const fileExt = path.extname(file).toLowerCase()
-        const name = path.basename(file, fileExt)
-        return IMAGE_FORMATS.includes(fileExt) && name === baseName
-      })
-
-      const subtitleFile = files.find(file => {
-        const fileExt = path.extname(file).toLowerCase()
-        const name = path.basename(file, fileExt)
-        return fileExt === '.srt' && name === baseName
-      })
-
-      videos.push({
-        name: baseName,
-        videoPath: path.join(directory, videoFile),
-        thumbnail: thumbnailFile ? path.join(directory, thumbnailFile) : null,
-        subtitle: subtitleFile ? path.join(directory, subtitleFile) : null
-      })
-    })
-
-    console.log(`${videos.length}개의 비디오를 찾았습니다.`)
-  } catch (error) {
-    console.error('디렉토리 스캔 오류:', error)
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath))
+    console.log('정적 파일 경로:', distPath)
   }
-
-  return videos
 }
 
-// 이미지 파일 스캔 함수 (비디오 섬네일 제외)
-function scanImages(directory) {
-  const images = []
-  const imageFormats = IMAGE_FORMATS
-  const videoFormats = VIDEO_FORMATS
-
-  try {
-    if (!fs.existsSync(directory)) {
-      return images
-    }
-
-    const files = fs.readdirSync(directory)
-
-    // 비디오 파일 이름 목록 (섬네일 제외용)
-    const videoNames = new Set()
-    files.forEach(file => {
-      const ext = path.extname(file).toLowerCase()
-      if (videoFormats.includes(ext)) {
-        const baseName = path.basename(file, ext)
-        videoNames.add(baseName)
-      }
-    })
-
-    // 이미지 파일 필터링 (비디오 섬네일 제외)
-    const imageFiles = files.filter(file => {
-      const ext = path.extname(file).toLowerCase()
-      if (!imageFormats.includes(ext)) return false
-
-      const baseName = path.basename(file, ext)
-      // 비디오와 같은 이름이면 섬네일이므로 제외
-      return !videoNames.has(baseName)
-    })
-
-    imageFiles.forEach(imageFile => {
-      const ext = path.extname(imageFile)
-      const baseName = path.basename(imageFile, ext)
-
-      images.push({
-        name: baseName,
-        imagePath: path.join(directory, imageFile),
-        fileName: imageFile
-      })
-    })
-
-    console.log(`${images.length}개의 독립 이미지를 찾았습니다.`)
-  } catch (error) {
-    console.error('이미지 스캔 오류:', error)
-  }
-
-  return images
-}
-
-// 폴더 트리 스캔 함수 (하위 폴더만)
-function getFolderTree(directory) {
-  const folders = []
-
-  try {
-    if (!fs.existsSync(directory)) {
-      return folders
-    }
-
-    const items = fs.readdirSync(directory, { withFileTypes: true })
-
-    items.forEach(item => {
-      if (item.isDirectory()) {
-        const fullPath = path.join(directory, item.name)
-        folders.push({
-          name: item.name,
-          path: fullPath
-        })
-      }
-    })
-
-    folders.sort((a, b) => a.name.localeCompare(b.name))
-  } catch (error) {
-    console.error('폴더 트리 스캔 오류:', error)
-  }
-
-  return folders
-}
-
-// SRT를 WebVTT로 변환하는 함수
-function convertSrtToVtt(srtContent) {
-  // SRT 포맷을 WebVTT로 변환
-  let vttContent = 'WEBVTT\n\n'
-
-  // 줄바꿈 정규화 (Windows/Linux/Mac 모두 지원)
-  srtContent = srtContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-
-  // SRT 자막 블록 분리
-  const blocks = srtContent.trim().split('\n\n')
-
-  blocks.forEach(block => {
-    const lines = block.split('\n')
-
-    // 첫 번째 줄은 번호이므로 제거
-    if (lines.length >= 2) {
-      const timeLine = lines[1]
-      const textLines = lines.slice(2)
-
-      // 타임스탬프의 쉼표를 마침표로 변경 (00:00:01,000 → 00:00:01.000)
-      const vttTimeLine = timeLine.replace(/,/g, '.')
-
-      vttContent += vttTimeLine + '\n'
-      vttContent += textLines.join('\n') + '\n\n'
-    }
-  })
-
-  return vttContent
-}
-
+// ============================================================
 // API 엔드포인트
+// ============================================================
 
 // 비디오 목록 조회
 app.get('/api/videos', (req, res) => {
@@ -226,38 +158,50 @@ app.get('/api/videos', (req, res) => {
   res.json(videoCache)
 })
 
-// 섬네일 이미지 제공
-app.get('/api/thumbnail/:path(*)', (req, res) => {
-  const thumbnailPath = decodeURIComponent(req.params.path)
+// 썸네일 이미지 제공 (캐싱 지원)
+app.get('/api/thumbnail/:path(*)', async (req, res) => {
+  const requestedPath = decodeURIComponent(req.params.path)
+  const validation = validatePath(requestedPath)
 
-  if (!fs.existsSync(thumbnailPath)) {
-    return res.status(404).send('섬네일을 찾을 수 없습니다.')
+  if (!validation.safe) {
+    return res.status(403).json({ error: validation.error })
   }
 
-  res.sendFile(thumbnailPath)
+  if (!fs.existsSync(validation.resolvedPath)) {
+    return res.status(404).send('파일을 찾을 수 없습니다.')
+  }
+
+  try {
+    const thumbnailPath = await generateThumbnail(validation.resolvedPath)
+    res.sendFile(thumbnailPath)
+  } catch (error) {
+    console.error('썸네일 생성 오류:', error)
+    res.status(500).send('썸네일 생성 실패')
+  }
 })
 
 // 자막 파일 제공 (SRT → WebVTT 변환)
 app.get('/api/subtitle/:path(*)', (req, res) => {
-  const subtitlePath = decodeURIComponent(req.params.path)
+  const requestedPath = decodeURIComponent(req.params.path)
+  const validation = validatePath(requestedPath)
 
-  if (!fs.existsSync(subtitlePath)) {
+  if (!validation.safe) {
+    return res.status(403).json({ error: validation.error })
+  }
+
+  if (!fs.existsSync(validation.resolvedPath)) {
     return res.status(404).send('자막 파일을 찾을 수 없습니다.')
   }
 
   try {
-    // Buffer로 파일을 읽어서 인코딩 처리
-    const buffer = fs.readFileSync(subtitlePath)
+    const buffer = fs.readFileSync(validation.resolvedPath)
     let srtContent = buffer.toString('utf8')
 
-    // UTF-8 디코딩이 실패했는지 확인 (replacement character가 있으면 실패)
     if (srtContent.includes('�') || srtContent.includes('\ufffd')) {
-      // CP949(EUC-KR 상위 호환)로 디코딩
       srtContent = iconv.decode(buffer, 'cp949')
     }
 
     const vttContent = convertSrtToVtt(srtContent)
-
     res.setHeader('Content-Type', 'text/vtt; charset=utf-8')
     res.send(vttContent)
   } catch (error) {
@@ -268,15 +212,27 @@ app.get('/api/subtitle/:path(*)', (req, res) => {
 
 // 비디오 스트리밍
 app.get('/api/video/:path(*)', (req, res) => {
-  const videoPath = decodeURIComponent(req.params.path)
+  const requestedPath = decodeURIComponent(req.params.path)
+  const validation = validatePath(requestedPath)
+
+  if (!validation.safe) {
+    return res.status(403).json({ error: validation.error })
+  }
+
+  const videoPath = validation.resolvedPath
 
   if (!fs.existsSync(videoPath)) {
     return res.status(404).send('비디오를 찾을 수 없습니다.')
   }
 
+  if (!validateExtension(videoPath, VIDEO_FORMATS)) {
+    return res.status(400).send('지원되지 않는 비디오 형식입니다.')
+  }
+
   const stat = fs.statSync(videoPath)
   const fileSize = stat.size
   const range = req.headers.range
+  const contentType = getVideoMimeType(videoPath)
 
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-')
@@ -285,40 +241,18 @@ app.get('/api/video/:path(*)', (req, res) => {
     const chunksize = (end - start) + 1
     const file = fs.createReadStream(videoPath, { start, end })
 
-    // 확장자별 MIME 타입 매핑
-    const ext = path.extname(videoPath).toLowerCase()
-    let contentType = 'video/mp4'
-    if (ext === '.mkv') contentType = 'video/x-matroska'
-    else if (ext === '.webm') contentType = 'video/webm'
-    else if (ext === '.avi') contentType = 'video/x-msvideo'
-    else if (ext === '.mov') contentType = 'video/quicktime'
-    else if (ext === '.flv') contentType = 'video/x-flv'
-    else if (ext === '.wmv') contentType = 'video/x-ms-wmv'
-
-    const head = {
+    res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${fileSize}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': chunksize,
       'Content-Type': contentType,
-    }
-    res.writeHead(206, head)
+    })
     file.pipe(res)
   } else {
-    // 확장자별 MIME 타입 매핑 (중복 로직이지만 간단히 인라인 처리)
-    const ext = path.extname(videoPath).toLowerCase()
-    let contentType = 'video/mp4'
-    if (ext === '.mkv') contentType = 'video/x-matroska'
-    else if (ext === '.webm') contentType = 'video/webm'
-    else if (ext === '.avi') contentType = 'video/x-msvideo'
-    else if (ext === '.mov') contentType = 'video/quicktime'
-    else if (ext === '.flv') contentType = 'video/x-flv'
-    else if (ext === '.wmv') contentType = 'video/x-ms-wmv'
-
-    const head = {
+    res.writeHead(200, {
       'Content-Length': fileSize,
       'Content-Type': contentType,
-    }
-    res.writeHead(200, head)
+    })
     fs.createReadStream(videoPath).pipe(res)
   }
 })
@@ -327,14 +261,16 @@ app.get('/api/video/:path(*)', (req, res) => {
 app.post('/api/set-directory', (req, res) => {
   const { directory } = req.body
 
+  if (!directory || typeof directory !== 'string') {
+    return res.status(400).json({ error: '유효한 디렉토리를 지정해주세요.' })
+  }
+
   if (!fs.existsSync(directory)) {
     return res.status(400).json({ error: '존재하지 않는 디렉토리입니다.' })
   }
 
   SCAN_DIRECTORY = directory
   videoCache = scanDirectory(SCAN_DIRECTORY)
-
-  // config.json에 저장
   saveConfig({ scanDirectory: directory })
 
   res.json({ message: '디렉토리가 설정되었습니다.', videoCount: videoCache.length })
@@ -390,42 +326,160 @@ app.get('/api/images-in-folder', (req, res) => {
   res.json(images)
 })
 
+// 특정 폴더의 하위 폴더 목록 조회 (썸네일 포함)
+app.get('/api/folders-in-directory', (req, res) => {
+  const { directory } = req.query
+
+  if (!directory) {
+    return res.status(400).json({ error: '디렉토리를 지정해주세요.' })
+  }
+
+  if (!fs.existsSync(directory)) {
+    return res.status(404).json({ error: '디렉토리를 찾을 수 없습니다.' })
+  }
+
+  const folders = getFoldersWithThumbnails(directory)
+  res.json(folders)
+})
+
 // 이미지 파일 제공
 app.get('/api/image/:path(*)', (req, res) => {
-  const imagePath = decodeURIComponent(req.params.path)
+  const requestedPath = decodeURIComponent(req.params.path)
+  const validation = validatePath(requestedPath)
 
-  if (!fs.existsSync(imagePath)) {
+  if (!validation.safe) {
+    return res.status(403).json({ error: validation.error })
+  }
+
+  if (!fs.existsSync(validation.resolvedPath)) {
     return res.status(404).send('이미지를 찾을 수 없습니다.')
   }
 
-  res.sendFile(imagePath)
+  if (!validateExtension(validation.resolvedPath, IMAGE_FORMATS)) {
+    return res.status(400).send('지원되지 않는 이미지 형식입니다.')
+  }
+
+  res.sendFile(validation.resolvedPath)
 })
 
-// 외부 플레이어로 비디오 열기
+// 외부 플레이어로 비디오 열기 (Command Injection 방어)
 app.post('/api/open-video', (req, res) => {
   const { videoPath } = req.body
 
-  if (!videoPath) {
+  if (!videoPath || typeof videoPath !== 'string') {
     return res.status(400).json({ error: '비디오 경로를 지정해주세요.' })
   }
 
-  if (!fs.existsSync(videoPath)) {
+  const validation = validatePath(videoPath)
+  if (!validation.safe) {
+    return res.status(403).json({ error: validation.error })
+  }
+
+  if (!fs.existsSync(validation.resolvedPath)) {
     return res.status(404).json({ error: '비디오 파일을 찾을 수 없습니다.' })
   }
 
-  // Windows에서 기본 프로그램으로 열기
-  exec(`start "" "${videoPath}"`, (error) => {
-    if (error) {
-      console.error('비디오 실행 오류:', error)
-      return res.status(500).json({ error: '비디오 실행 실패' })
-    }
-    res.json({ message: '비디오를 실행했습니다.' })
+  if (!validateExtension(validation.resolvedPath, VIDEO_FORMATS)) {
+    return res.status(400).json({ error: '지원되지 않는 비디오 형식입니다.' })
+  }
+
+  // Command Injection 방어: spawn 사용 (shell: false)
+  let command, args
+  switch (process.platform) {
+    case 'win32':
+      command = 'cmd.exe'
+      args = ['/c', 'start', '""', validation.resolvedPath]
+      break
+    case 'darwin':
+      command = 'open'
+      args = [validation.resolvedPath]
+      break
+    case 'linux':
+      command = 'xdg-open'
+      args = [validation.resolvedPath]
+      break
+    default:
+      return res.status(500).json({ error: '지원되지 않는 OS입니다.' })
+  }
+
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: 'ignore',
+    shell: false
+  })
+
+  child.on('error', (error) => {
+    console.error('비디오 실행 오류:', error)
+    return res.status(500).json({ error: '비디오 실행 실패' })
+  })
+
+  child.unref()
+  res.json({ message: '비디오를 실행했습니다.' })
+})
+
+// 썸네일 캐시 통계 조회
+app.get('/api/cache/stats', (req, res) => {
+  const stats = getCacheStats()
+  res.json(stats)
+})
+
+// 썸네일 캐시 삭제
+app.delete('/api/cache/clear', (req, res) => {
+  const deletedCount = clearThumbnailCache()
+  res.json({
+    message: '썸네일 캐시가 삭제되었습니다.',
+    deletedCount
   })
 })
+
+// 헬스 체크 (Electron용)
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now() })
+})
+
+// SPA 라우팅 - 모든 404를 index.html로 (API 제외)
+if (isProduction || isElectron) {
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      const distPath = isElectron
+        ? path.join(process.env.RESOURCES_PATH || __dirname, '..', 'dist')
+        : path.join(__dirname, '..', 'dist')
+      res.sendFile(path.join(distPath, 'index.html'))
+    } else {
+      res.status(404).json({ error: 'API not found' })
+    }
+  })
+}
+
+// ============================================================
+// 전역 에러 핸들러
+// ============================================================
+
+app.use((err, req, res, next) => {
+  console.error('서버 오류:', err)
+  res.status(500).json({
+    error: '서버 내부 오류가 발생했습니다.',
+    message: isProduction ? undefined : err.message
+  })
+})
+
+// 처리되지 않은 Promise rejection 핸들링
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection:', reason)
+})
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error)
+})
+
+// ============================================================
+// 서버 시작
+// ============================================================
 
 app.listen(PORT, () => {
   console.log(`서버가 http://localhost:${PORT}에서 실행 중입니다.`)
   console.log(`설정 파일: ${CONFIG_PATH}`)
   console.log(`스캔 디렉토리: ${SCAN_DIRECTORY}`)
+  console.log(`환경: ${isProduction ? 'Production' : 'Development'}${isElectron ? ' (Electron)' : ''}`)
   videoCache = scanDirectory(SCAN_DIRECTORY)
 })

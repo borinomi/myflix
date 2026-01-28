@@ -1,1 +1,0 @@
-npx concurrently "npm run server" "npm run client -- --host 0.0.0.0 --port 3000"

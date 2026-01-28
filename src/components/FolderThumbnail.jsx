@@ -1,12 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
-import './VideoThumbnail.css'
+import './FolderThumbnail.css'
 
-function ImageThumbnail({ image, index, onSelect }) {
+function FolderThumbnail({ folder, onSelect }) {
   const [imageLoaded, setImageLoaded] = useState(false)
   const [isVisible, setIsVisible] = useState(false)
   const thumbnailRef = useRef(null)
+  const hasThumbnail = folder.thumbnail !== null
 
   useEffect(() => {
+    // 썸네일이 없으면 바로 로드 완료 처리
+    if (!hasThumbnail) {
+      setImageLoaded(true)
+      setIsVisible(true)
+      return
+    }
+
     const node = thumbnailRef.current
     if (!node) return
 
@@ -27,38 +35,45 @@ function ImageThumbnail({ image, index, onSelect }) {
     return () => {
       observer.unobserve(node)
     }
-  }, [])
+  }, [hasThumbnail])
 
   const handleImageLoad = () => {
     setImageLoaded(true)
   }
 
   const handleClick = () => {
-    onSelect(image, index)
+    onSelect(folder.path)
   }
 
   return (
     <div
       ref={thumbnailRef}
-      className="video-thumbnail"
+      className="folder-thumbnail"
       onClick={handleClick}
     >
-      <div className={`thumbnail-image ${imageLoaded ? 'loaded' : ''}`}>
+      <div className={`thumbnail-image ${imageLoaded ? 'loaded' : ''} ${!hasThumbnail ? 'no-thumbnail' : ''}`}>
         {!imageLoaded && <div className="skeleton" />}
-        {isVisible && (
+        {hasThumbnail && isVisible ? (
           <img
-            src={`/api/image/${encodeURIComponent(image.imagePath)}`}
-            alt={image.name}
+            src={`/api/thumbnail/${encodeURIComponent(folder.thumbnail)}`}
+            alt={folder.name}
             onLoad={handleImageLoad}
             style={{ display: imageLoaded ? 'block' : 'none' }}
           />
-        )}
+        ) : !hasThumbnail ? (
+          <div className="default-thumbnail">
+            <div className="folder-icon-large">📁</div>
+          </div>
+        ) : null}
+        <div className="folder-badge">
+          <span className="folder-badge-icon">📁</span>
+        </div>
       </div>
       <div className="thumbnail-info">
-        <p className="video-name">{image.fileName}</p>
+        <p className="folder-name">{folder.name}</p>
       </div>
     </div>
   )
 }
 
-export default ImageThumbnail
+export default FolderThumbnail
